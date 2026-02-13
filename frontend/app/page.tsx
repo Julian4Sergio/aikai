@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { FormEvent, useState } from "react";
+import Image from "next/image";
 
 type Phase = "home" | "loading" | "chat";
 
@@ -64,7 +65,9 @@ export default function HomePage() {
     <main className="app-shell">
       <header className="top-bar">
         <div className="brand">
-          <span className="brand-icon">✦</span>
+          <span className="brand-icon" aria-hidden="true">
+            <Image src="/logo.png" alt="" width={20} height={20} />
+          </span>
           <span className="brand-text">aikai</span>
         </div>
         <button className="top-action" type="button">

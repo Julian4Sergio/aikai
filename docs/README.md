@@ -37,6 +37,7 @@
 - `docs/releases/v1.0/SLA_SLO_V1.0.md`
 - `docs/releases/v1.0/UI_ASSET_GUIDE_V1.0.md`
 - `docs/releases/v1.0/PROJECT_FLOW_AUDIT_V1.0.md`
+- `docs/releases/v1.0/FRONTEND_VERCEL_DEPLOY_V1.0.md`
 
 ## 执行规则
 

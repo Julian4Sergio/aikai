@@ -1,0 +1,38 @@
+﻿{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Backend: FastAPI (Uvicorn)",
+      "type": "python",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload"
+      ],
+      "cwd": "${workspaceFolder}/backend",
+      "python": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Frontend: Next.js Dev",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm.cmd run dev",
+      "cwd": "${workspaceFolder}/frontend"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Fullstack: Frontend + Backend",
+      "configurations": [
+        "Backend: FastAPI (Uvicorn)",
+        "Frontend: Next.js Dev"
+      ]
+    }
+  ]
+}

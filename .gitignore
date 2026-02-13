@@ -1,0 +1,32 @@
+﻿# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/.pnpm-store/
+
+# Python / Backend
+backend/.venv/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/__pycache__/
+*.pyc
+
+# Env / Secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Build / Coverage
+coverage/
+htmlcov/

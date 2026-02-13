@@ -1,64 +1,111 @@
 ﻿"use client";
 
-import { FormEvent, useState } from "react";
 import Image from "next/image";
+import { FormEvent, useMemo, useState } from "react";
 
 type Phase = "home" | "loading" | "chat";
 
-const mockAnswers = [
-  {
-    intro:
-      "Practicing mindfulness in a high-pressure workplace serves as a cognitive anchor, helping professionals navigate complex demands with greater clarity and emotional resilience.",
-    cardA:
-      "Mindfulness reduces multitasking noise and helps teams sustain priority focus with lower mental fatigue.",
-    cardB:
-      "It creates a pause between stimulus and reaction, enabling more measured communication during stress.",
-    ending:
-      "Over time, even short daily practice can improve collaboration quality and perceived productivity across teams.",
-  },
-  {
-    intro:
-      "For early-stage product teams, concise rituals and shared context reduce decision churn and improve shipping cadence.",
-    cardA:
-      "Daily focus windows lower context switching and protect deep work for core architecture tasks.",
-    cardB:
-      "A short async check-in can surface risks earlier without adding heavy meeting overhead.",
-    ending:
-      "The practical outcome is fewer blocked tasks and a steadier release rhythm under pressure.",
-  },
-];
+type ChatSuccess = {
+  answer: string;
+  request_id: string;
+  latency_ms: number;
+};
+
+type ChatError = {
+  error_code: string;
+  error_message: string;
+  request_id: string;
+};
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
 
 export default function HomePage() {
   const [phase, setPhase] = useState<Phase>("home");
   const [question, setQuestion] = useState("");
   const [activeQuestion, setActiveQuestion] = useState("");
-  const [showError, setShowError] = useState(false);
-  const [answerIndex, setAnswerIndex] = useState(0);
+  const [answerText, setAnswerText] = useState("");
+  const [requestId, setRequestId] = useState("");
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const answer = mockAnswers[answerIndex];
+  const answerParagraphs = useMemo(
+    () => answerText.split(/\n+/).map((item) => item.trim()).filter(Boolean),
+    [answerText],
+  );
 
-  const submitQuestion = (event: FormEvent) => {
+  const resetToHome = () => {
+    setPhase("home");
+    setQuestion("");
+    setActiveQuestion("");
+    setAnswerText("");
+    setRequestId("");
+    setLatencyMs(null);
+    setErrorMessage("");
+  };
+
+  const submitQuestion = async (event: FormEvent) => {
     event.preventDefault();
     const content = question.trim();
     if (!content) {
       return;
     }
 
-    setShowError(false);
+    setErrorMessage("");
+    setAnswerText("");
+    setRequestId("");
+    setLatencyMs(null);
     setActiveQuestion(content);
-    setAnswerIndex(Math.floor(Math.random() * mockAnswers.length));
     setPhase("loading");
 
-    const shouldFail = content.toLowerCase().includes("error");
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 16000);
 
-    window.setTimeout(() => {
-      if (shouldFail) {
-        setShowError(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: content,
+          tenant_id: "tenant_personal_default",
+          edition: "personal",
+        }),
+        signal: controller.signal,
+      });
+
+      const payload = (await response.json()) as ChatSuccess | ChatError;
+
+      if (!response.ok) {
+        const errPayload = payload as ChatError;
+        setErrorMessage(
+          `${errPayload.error_code}: ${errPayload.error_message || "请求失败"}`,
+        );
+        setRequestId(errPayload.request_id || "");
+        setPhase("chat");
+        setQuestion("");
+        return;
+      }
+
+      const successPayload = payload as ChatSuccess;
+      setAnswerText(successPayload.answer);
+      setRequestId(successPayload.request_id);
+      setLatencyMs(successPayload.latency_ms);
+      setPhase("chat");
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        setErrorMessage("请求超时，请稍后重试。");
+      } else {
+        setErrorMessage(
+          "无法连接后端服务。请先在本地启动 FastAPI（http://localhost:8000）。",
+        );
       }
       setPhase("chat");
-    }, 1100);
-
-    setQuestion("");
+    } finally {
+      window.clearTimeout(timer);
+      setQuestion("");
+    }
   };
 
   return (
@@ -70,7 +117,7 @@ export default function HomePage() {
           </span>
           <span className="brand-text">aikai</span>
         </div>
-        <button className="top-action" type="button">
+        <button className="top-action" type="button" onClick={resetToHome}>
           + New Chat
         </button>
       </header>
@@ -88,7 +135,7 @@ export default function HomePage() {
             <button
               className="prompt-card"
               type="button"
-              onClick={() => setQuestion("Brainstorm ideas for a minimalist website")}
+              onClick={() => setQuestion("帮我总结一下今天需要做的三件事")}
             >
               <strong>Brainstorm ideas</strong>
               <span>Creative concepts for a minimalist website.</span>
@@ -96,7 +143,7 @@ export default function HomePage() {
             <button
               className="prompt-card"
               type="button"
-              onClick={() => setQuestion("Summarize this article into three key points")}
+              onClick={() => setQuestion("请给我一个可执行的学习计划")}
             >
               <strong>Summarize text</strong>
               <span>Condense this article into three key points.</span>
@@ -116,32 +163,23 @@ export default function HomePage() {
             </div>
           )}
 
-          {phase === "chat" && !showError && (
+          {phase === "chat" && !errorMessage && (
             <article className="answer-block">
               <div className="label">INSIGHT</div>
-              <p>{answer.intro}</p>
-              <div className="insight-cards">
-                <section>
-                  <h3>Cognitive Resilience</h3>
-                  <p>{answer.cardA}</p>
-                </section>
-                <section>
-                  <h3>Emotional Regulation</h3>
-                  <p>{answer.cardB}</p>
-                </section>
+              {answerParagraphs.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
+              <div className="ops-row">
+                request_id: {requestId || "-"} · latency: {latencyMs ?? "-"} ms
               </div>
-              <p>{answer.ending}</p>
-              <div className="ops-row">Copy · Helpful · Share</div>
             </article>
           )}
 
-          {phase === "chat" && showError && (
+          {phase === "chat" && !!errorMessage && (
             <article className="error-block">
-              <h3>Mock Error</h3>
-              <p>
-                This is a frontend-only simulated failure. Remove the word
-                &quot;error&quot; from your prompt to get a normal response.
-              </p>
+              <h3>Request Failed</h3>
+              <p>{errorMessage}</p>
+              <p>request_id: {requestId || "-"}</p>
             </article>
           )}
         </section>
@@ -155,10 +193,12 @@ export default function HomePage() {
             phase === "home" ? "Ask me anything..." : "Type your next question..."
           }
         />
-        <button type="submit">{phase === "home" ? "➤" : "Ask"}</button>
+        <button type="submit" disabled={phase === "loading"}>
+          {phase === "home" ? "➤" : "Ask"}
+        </button>
       </form>
 
-      <footer className="foot-note">AI MODEL: V2.4 MINIMALIST · NO LOGS STORED</footer>
+      <footer className="foot-note">AI MODEL: LOCAL MOCK BACKEND · V1.0 BASELINE</footer>
     </main>
   );
 }

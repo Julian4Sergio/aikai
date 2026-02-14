@@ -7,6 +7,7 @@
 - `docs/foundation/`：基础规范
 - `docs/templates/`：模板库
 - `docs/releases/v1.0/`：`V1.0` 版本文档包
+- `docs/releases/v1.1/`：`V1.1` 增量范围与承接项
 
 ## 基础规范（foundation）
 
@@ -38,6 +39,10 @@
 - `docs/releases/v1.0/UI_ASSET_GUIDE_V1.0.md`
 - `docs/releases/v1.0/PROJECT_FLOW_AUDIT_V1.0.md`
 - `docs/releases/v1.0/FRONTEND_VERCEL_DEPLOY_V1.0.md`
+
+## V1.1 承接文档（增量）
+
+- `docs/releases/v1.1/V1.1_BACKLOG_FROM_V1.0.md`
 
 ## 执行规则
 

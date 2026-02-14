@@ -69,11 +69,41 @@ body {
 }
 
 .top-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 0;
   background: transparent;
   color: #5f7490;
   font-weight: 700;
   cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 10px;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.top-action:hover {
+  background: rgba(95, 116, 144, 0.1);
+  color: #3f5a7d;
+}
+
+.top-action:active {
+  background: rgba(95, 116, 144, 0.16);
+}
+
+.top-action-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.top-action-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: currentColor;
 }
 
 .home-state {

@@ -1,11 +1,9 @@
-﻿"use client";
+"use client";
 
 import Image from "next/image";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import MarkdownContent from "./chat/MarkdownContent";
-import { ChatError, ChatTurn, StreamDeltaPayload, StreamDonePayload } from "./chat/types";
-import { useTypewriter } from "./chat/useTypewriter";
-import { buildHistory, parseSseEvent, safeJsonParse } from "./chat/utils";
+import { ChatCompletionSuccess, ChatError, ChatTurn } from "./chat/types";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
@@ -19,16 +17,12 @@ export default function HomePage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [errorRequestId, setErrorRequestId] = useState("");
 
-  const { streamingText, enqueue, finish, reset } = useTypewriter(15);
-
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const activeAbortControllerRef = useRef<AbortController | null>(null);
-  const userStoppedRef = useRef(false);
   const scrollFrameRef = useRef<number | null>(null);
 
   const canSubmit = question.trim().length > 0 && !loading;
-  const hasConversation =
-    turns.length > 0 || !!pendingQuestion || !!streamingText || !!errorMessage;
+  const hasConversation = turns.length > 0 || !!pendingQuestion || !!errorMessage;
 
   const scrollToLogBottom = (behavior: ScrollBehavior) => {
     const container = chatLogRef.current;
@@ -57,7 +51,7 @@ export default function HomePage() {
       scrollFrameRef.current = null;
       scrollToLogBottom("auto");
     });
-  }, [streamingText, loading]);
+  }, [loading]);
 
   useEffect(() => {
     return () => {
@@ -77,8 +71,8 @@ export default function HomePage() {
     if (!finalAnswer) {
       return;
     }
-    setTurns((prev) => [
-      ...prev,
+
+    setTurns([
       {
         question: turnQuestion,
         answer: finalAnswer,
@@ -91,8 +85,6 @@ export default function HomePage() {
   const resetToHome = () => {
     activeAbortControllerRef.current?.abort();
     activeAbortControllerRef.current = null;
-    userStoppedRef.current = false;
-    reset();
     setQuestion("");
     setPendingQuestion("");
     setTurns([]);
@@ -105,7 +97,6 @@ export default function HomePage() {
     if (!loading) {
       return;
     }
-    userStoppedRef.current = true;
     activeAbortControllerRef.current?.abort();
   };
 
@@ -121,17 +112,10 @@ export default function HomePage() {
     setErrorRequestId("");
     setPendingQuestion(content);
     setQuestion("");
-    reset();
 
     const controller = new AbortController();
     activeAbortControllerRef.current = controller;
-    userStoppedRef.current = false;
     const timer = window.setTimeout(() => controller.abort(), 60000);
-
-    let finalRequestId = "";
-    let finalLatencyMs: number | null = null;
-    let accumulatedAnswer = "";
-    let failed = false;
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/chat/completions`, {
@@ -141,7 +125,6 @@ export default function HomePage() {
         },
         body: JSON.stringify({
           message: content,
-          history: buildHistory(turns),
           tenant_id: "tenant_personal_default",
           edition: "personal",
         }),
@@ -152,105 +135,27 @@ export default function HomePage() {
         const payload = (await response.json()) as ChatError;
         setErrorMessage(`${payload.error_code}: ${payload.error_message || "请求失败"}`);
         setErrorRequestId(payload.request_id || "");
-        failed = true;
         return;
       }
 
-      if (!response.body) {
-        setErrorMessage("流式响应为空");
-        failed = true;
-        return;
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      const handleEventBlock = (block: string) => {
-        const parsed = parseSseEvent(block);
-        if (!parsed) {
-          return;
-        }
-
-        if (parsed.event === "delta") {
-          const delta = safeJsonParse<StreamDeltaPayload>(parsed.data);
-          if (!delta || typeof delta.content !== "string") {
-            return;
-          }
-          accumulatedAnswer += delta.content;
-          enqueue(delta.content);
-          return;
-        }
-
-        if (parsed.event === "done") {
-          const donePayload = safeJsonParse<StreamDonePayload>(parsed.data);
-          if (!donePayload) {
-            return;
-          }
-          finalRequestId = donePayload.request_id || "";
-          finalLatencyMs = donePayload.latency_ms ?? null;
-          return;
-        }
-
-        if (parsed.event === "error") {
-          const errPayload = safeJsonParse<ChatError>(parsed.data);
-          if (!errPayload) {
-            return;
-          }
-          setErrorMessage(`${errPayload.error_code}: ${errPayload.error_message || "请求失败"}`);
-          setErrorRequestId(errPayload.request_id || "");
-          failed = true;
-        }
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const blocks = buffer.split(/\r?\n\r?\n/);
-        buffer = blocks.pop() ?? "";
-
-        for (const block of blocks) {
-          handleEventBlock(block);
-        }
-      }
-
-      if (buffer.trim()) {
-        handleEventBlock(buffer.trim());
-      }
-
-      await finish();
-
-      if (!failed) {
-        appendTurn(content, accumulatedAnswer, finalRequestId, finalLatencyMs);
-      }
+      const payload = (await response.json()) as ChatCompletionSuccess;
+      appendTurn(
+        content,
+        payload.answer || "",
+        payload.request_id || "",
+        typeof payload.latency_ms === "number" ? payload.latency_ms : null,
+      );
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
-        if (userStoppedRef.current) {
-          await finish();
-          appendTurn(content, accumulatedAnswer, finalRequestId, finalLatencyMs);
-          failed = false;
-        } else {
-          failed = true;
-          setErrorMessage("请求超时，请稍后重试。");
-        }
+        setErrorMessage("请求超时，请稍后重试。");
       } else {
-        failed = true;
         setErrorMessage("无法连接后端服务，请确认 FastAPI 已启动。");
       }
     } finally {
       activeAbortControllerRef.current = null;
-      userStoppedRef.current = false;
       window.clearTimeout(timer);
       setLoading(false);
       setPendingQuestion("");
-      reset();
-      if (failed && finalRequestId) {
-        setErrorRequestId((prev) => prev || finalRequestId);
-      }
     }
   };
 
@@ -264,7 +169,12 @@ export default function HomePage() {
           <span className="brand-text">aikai</span>
         </div>
         <button className="top-action" type="button" onClick={resetToHome}>
-          + 新对话
+          <span className="top-action-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20" focusable="false">
+              <path d="M4 3.5h7a2.5 2.5 0 0 1 2.5 2.5v2.1a.75.75 0 0 1-1.5 0V6A1 1 0 0 0 11 5H4a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h2.1a.75.75 0 0 1 0 1.5H4A2.5 2.5 0 0 1 1.5 13V6A2.5 2.5 0 0 1 4 3.5Zm9.25 5.75a.75.75 0 0 1 .75.75v2.25H16.25a.75.75 0 0 1 0 1.5H14v2.25a.75.75 0 0 1-1.5 0V13.75h-2.25a.75.75 0 0 1 0-1.5h2.25V10a.75.75 0 0 1 .75-.75Z" />
+            </svg>
+          </span>
+          <span>新对话</span>
         </button>
       </header>
 
@@ -329,7 +239,7 @@ export default function HomePage() {
               </article>
             ))}
 
-            {(loading || !!streamingText || !!pendingQuestion) && (
+            {(loading || !!pendingQuestion) && (
               <article className="chat-turn" key="live-turn">
                 <div className="message-row message-row-user">
                   <div className="message-avatar message-avatar-user" aria-hidden="true">
@@ -342,7 +252,7 @@ export default function HomePage() {
                     <Image src="/logo-v2.png" alt="" width={26} height={26} className="brand-logo" />
                   </div>
                   <div className="answer-block" aria-live="polite">
-                    <MarkdownContent content={streamingText || "思考中..."} />
+                    <MarkdownContent content="思考中..." />
                   </div>
                 </div>
               </article>

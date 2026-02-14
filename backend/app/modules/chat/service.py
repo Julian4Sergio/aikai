@@ -16,7 +16,7 @@ async def generate_answer(message: str, history: list[dict[str, str]] | None = N
         chunks.append(chunk)
     answer = "".join(chunks).strip()
     if not answer:
-        raise AppError("UPSTREAM_ERROR", "provider returned empty content", 502)
+        raise AppError("INTERNAL_ERROR", "provider returned empty content", 500)
     return answer
 
 
@@ -52,7 +52,7 @@ async def generate_answer_stream(
         return
 
     raise AppError(
-        "MISCONFIGURED",
+        "INTERNAL_ERROR",
         "LLM_PROVIDER must be one of: siliconflow, openai",
         500,
     )
@@ -71,7 +71,7 @@ async def _stream_with_chat_completions(
 ) -> AsyncIterator[str]:
     if not api_key:
         raise AppError(
-            "MISCONFIGURED",
+            "INTERNAL_ERROR",
             f"{provider_name.upper()}_API_KEY is not configured",
             500,
         )
@@ -97,11 +97,11 @@ async def _stream_with_chat_completions(
                 if response.status_code >= 400:
                     body = await response.aread()
                     raise AppError(
-                        "UPSTREAM_ERROR",
+                        "INTERNAL_ERROR",
                         _extract_upstream_error_message_from_bytes(
                             response.status_code, body
                         ),
-                        502,
+                        500,
                     )
 
                 has_content = False
@@ -114,17 +114,17 @@ async def _stream_with_chat_completions(
 
                 if not has_content:
                     raise AppError(
-                        "UPSTREAM_ERROR",
+                        "INTERNAL_ERROR",
                         f"{provider_name} returned empty content",
-                        502,
+                        500,
                     )
     except httpx.TimeoutException as exc:
         raise AppError("TIMEOUT", f"{provider_name} request timed out", 408) from exc
     except httpx.HTTPError as exc:
         raise AppError(
-            "UPSTREAM_UNAVAILABLE",
+            "INTERNAL_ERROR",
             f"failed to connect to {provider_name}",
-            502,
+            500,
         ) from exc
 
 

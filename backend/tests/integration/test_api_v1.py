@@ -92,6 +92,67 @@ def test_chat_completions_internal_error(monkeypatch):
     assert body["request_id"].startswith("req_")
 
 
+def test_chat_stream_success(monkeypatch):
+    async def fake_generate_answer_stream(message: str, history=None):
+        assert message == "你好"
+        assert history == [{"role": "user", "content": "上一个问题"}]
+        yield "这是"
+        yield "流式回答"
+
+    monkeypatch.setattr(
+        "app.api.v1.routes.generate_answer_stream",
+        fake_generate_answer_stream,
+    )
+
+    with client.stream(
+        "POST",
+        "/api/v1/chat/stream",
+        json={
+            "message": "你好",
+            "tenant_id": "tenant_personal_default",
+            "edition": "personal",
+            "history": [{"role": "user", "content": "上一个问题"}],
+        },
+    ) as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        lines = [line for line in response.iter_lines() if line]
+
+    text = "\n".join(lines)
+    assert "event: delta" in text
+    assert '"delta":"这是"' in text
+    assert '"delta":"流式回答"' in text
+    assert "event: done" in text
+
+
+def test_chat_stream_error_event(monkeypatch):
+    async def fake_generate_answer_stream(message: str, history=None):
+        raise AppError("TIMEOUT", "request timed out", 408)
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(
+        "app.api.v1.routes.generate_answer_stream",
+        fake_generate_answer_stream,
+    )
+
+    with client.stream(
+        "POST",
+        "/api/v1/chat/stream",
+        json={
+            "message": "你好",
+            "tenant_id": "tenant_personal_default",
+            "edition": "personal",
+            "history": [],
+        },
+    ) as response:
+        assert response.status_code == 200
+        lines = [line for line in response.iter_lines() if line]
+
+    text = "\n".join(lines)
+    assert "event: error" in text
+    assert '"error_code":"TIMEOUT"' in text
+
+
 def test_log_contains_required_fields(capsys):
     response = client.get("/healthz")
     assert response.status_code == 200
@@ -104,3 +165,6 @@ def test_log_contains_required_fields(capsys):
     assert "path" in log_item
     assert "status_code" in log_item
     assert "latency_ms" in log_item
+    assert "is_stream" in log_item
+    assert "ttft_ms" in log_item
+    assert "cancelled" in log_item

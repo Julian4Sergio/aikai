@@ -7,10 +7,27 @@ class Edition(str, Enum):
     ENTERPRISE = "enterprise"
 
 
+class ChatRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
 class ChatCompletionRequest(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     tenant_id: str = Field(min_length=1)
     edition: Edition
+
+
+class ChatHistoryItem(BaseModel):
+    role: ChatRole
+    content: str = Field(min_length=1, max_length=8000)
+
+
+class ChatStreamRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=8000)
+    tenant_id: str = Field(min_length=1)
+    edition: Edition
+    history: list[ChatHistoryItem] = Field(default_factory=list)
 
 
 class ChatCompletionResponse(BaseModel):

@@ -10,6 +10,11 @@ export type ChatCompletionSuccess = {
   latency_ms: number;
 };
 
+export type ChatHistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 export type ChatTurn = {
   question: string;
   answer: string;

@@ -8,8 +8,13 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "aikai | V1.0 Frontend Mock",
-  description: "V1.0 pure frontend demo with mocked chat flow",
+  title: "aikai | 智能助手",
+  description: "aikai 前端对话界面",
+  icons: {
+    icon: "/logo-without-text.png",
+    shortcut: "/logo-without-text.png",
+    apple: "/logo-without-text.png",
+  },
 };
 
 export default function RootLayout({

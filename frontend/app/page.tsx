@@ -1,68 +1,161 @@
-﻿"use client";
+"use client";
 
 import Image from "next/image";
-import { FormEvent, useMemo, useState } from "react";
-
-type Phase = "home" | "loading" | "chat";
-
-type ChatSuccess = {
-  answer: string;
-  request_id: string;
-  latency_ms: number;
-};
-
-type ChatError = {
-  error_code: string;
-  error_message: string;
-  request_id: string;
-};
+import { FormEvent, useEffect, useRef, useState } from "react";
+import MarkdownContent from "./chat/MarkdownContent";
+import { ChatError, ChatHistoryMessage, ChatTurn } from "./chat/types";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
+const LOGO_SRC = "/logo-without-text.png";
+const USER_AVATAR_SRC = "/user-avatar.png";
+const HISTORY_WINDOW_TURNS = 6;
 
 export default function HomePage() {
-  const [phase, setPhase] = useState<Phase>("home");
   const [question, setQuestion] = useState("");
-  const [activeQuestion, setActiveQuestion] = useState("");
-  const [answerText, setAnswerText] = useState("");
-  const [requestId, setRequestId] = useState("");
-  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [pendingQuestion, setPendingQuestion] = useState("");
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [liveAnswer, setLiveAnswer] = useState("");
+  const [liveRequestId, setLiveRequestId] = useState("");
+  const [liveLatencyMs, setLiveLatencyMs] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [errorRequestId, setErrorRequestId] = useState("");
 
-  const answerParagraphs = useMemo(
-    () => answerText.split(/\n+/).map((item) => item.trim()).filter(Boolean),
-    [answerText],
-  );
+  const chatLogRef = useRef<HTMLDivElement | null>(null);
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
+  const stoppedByUserRef = useRef(false);
+  const scrollFrameRef = useRef<number | null>(null);
+
+  const canSubmit = question.trim().length > 0 && !loading;
+  const hasConversation =
+    turns.length > 0 || !!pendingQuestion || !!liveAnswer || !!errorMessage;
+
+  const scrollToLogBottom = (behavior: ScrollBehavior) => {
+    const container = chatLogRef.current;
+    if (!container) {
+      return;
+    }
+    container.scrollTo({ top: container.scrollHeight, behavior });
+  };
+
+  useEffect(() => {
+    if (!hasConversation) {
+      return;
+    }
+    scrollToLogBottom("auto");
+  }, [hasConversation, turns.length, pendingQuestion, errorMessage]);
+
+  useEffect(() => {
+    if (!loading) {
+      return;
+    }
+    if (scrollFrameRef.current !== null) {
+      return;
+    }
+
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      scrollToLogBottom("auto");
+    });
+  }, [loading]);
+
+  useEffect(() => {
+    if (!loading || !liveAnswer) {
+      return;
+    }
+    scrollToLogBottom("auto");
+  }, [loading, liveAnswer]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+    };
+  }, []);
+
+  const appendTurn = (
+    turnQuestion: string,
+    answer: string,
+    requestId: string,
+    latencyMs: number | null,
+  ) => {
+    const finalAnswer = answer.trim();
+    if (!finalAnswer) {
+      return;
+    }
+
+    setTurns((prev) => [
+      ...prev,
+      {
+        question: turnQuestion,
+        answer: finalAnswer,
+        requestId,
+        latencyMs,
+      },
+    ]);
+  };
 
   const resetToHome = () => {
-    setPhase("home");
+    activeAbortControllerRef.current?.abort();
+    activeAbortControllerRef.current = null;
+    stoppedByUserRef.current = false;
     setQuestion("");
-    setActiveQuestion("");
-    setAnswerText("");
-    setRequestId("");
-    setLatencyMs(null);
+    setPendingQuestion("");
+    setTurns([]);
+    setLiveAnswer("");
+    setLiveRequestId("");
+    setLiveLatencyMs(null);
+    setLoading(false);
     setErrorMessage("");
+    setErrorRequestId("");
+  };
+
+  const stopGeneration = () => {
+    if (!loading) {
+      return;
+    }
+    stoppedByUserRef.current = true;
+    activeAbortControllerRef.current?.abort();
+  };
+
+  const buildHistoryWindow = (): ChatHistoryMessage[] => {
+    return turns
+      .slice(-HISTORY_WINDOW_TURNS)
+      .flatMap((turn) => [
+        { role: "user" as const, content: turn.question },
+        { role: "assistant" as const, content: turn.answer },
+      ]);
   };
 
   const submitQuestion = async (event: FormEvent) => {
     event.preventDefault();
     const content = question.trim();
-    if (!content) {
+    if (!content || loading) {
       return;
     }
 
+    setLoading(true);
     setErrorMessage("");
-    setAnswerText("");
-    setRequestId("");
-    setLatencyMs(null);
-    setActiveQuestion(content);
-    setPhase("loading");
+    setErrorRequestId("");
+    setPendingQuestion(content);
+    setQuestion("");
+    setLiveAnswer("");
+    setLiveRequestId("");
+    setLiveLatencyMs(null);
 
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 16000);
+    stoppedByUserRef.current = false;
+    activeAbortControllerRef.current = controller;
+    const timer = window.setTimeout(() => controller.abort(), 60000);
+    const history = buildHistoryWindow();
+    let streamedAnswer = "";
+    let requestId = "";
+    let latencyMs: number | null = null;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/chat/completions`, {
+      const response = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -71,134 +164,279 @@ export default function HomePage() {
           message: content,
           tenant_id: "tenant_personal_default",
           edition: "personal",
+          history,
         }),
         signal: controller.signal,
       });
 
-      const payload = (await response.json()) as ChatSuccess | ChatError;
-
       if (!response.ok) {
-        const errPayload = payload as ChatError;
-        setErrorMessage(
-          `${errPayload.error_code}: ${errPayload.error_message || "请求失败"}`,
-        );
-        setRequestId(errPayload.request_id || "");
-        setPhase("chat");
-        setQuestion("");
+        const payload = (await response.json()) as ChatError;
+        setErrorMessage(`${payload.error_code}: ${payload.error_message || "请求失败"}`);
+        setErrorRequestId(payload.request_id || "");
         return;
       }
 
-      const successPayload = payload as ChatSuccess;
-      setAnswerText(successPayload.answer);
-      setRequestId(successPayload.request_id);
-      setLatencyMs(successPayload.latency_ms);
-      setPhase("chat");
+      if (!response.body) {
+        setErrorMessage("后端未返回流式响应体。");
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+
+        for (const frame of frames) {
+          const lines = frame.split("\n");
+          let eventName = "";
+          let dataRaw = "";
+
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataRaw += line.slice(5).trim();
+            }
+          }
+
+          if (!eventName || !dataRaw) {
+            continue;
+          }
+
+          try {
+            const payload = JSON.parse(dataRaw) as Record<string, unknown>;
+
+            if (eventName === "delta") {
+              const delta = typeof payload.delta === "string" ? payload.delta : "";
+              if (delta) {
+                streamedAnswer += delta;
+                setLiveAnswer(streamedAnswer);
+              }
+              if (!requestId && typeof payload.request_id === "string") {
+                requestId = payload.request_id;
+                setLiveRequestId(requestId);
+              }
+              continue;
+            }
+
+            if (eventName === "done") {
+              if (typeof payload.request_id === "string") {
+                requestId = payload.request_id;
+                setLiveRequestId(requestId);
+              }
+              if (typeof payload.latency_ms === "number") {
+                latencyMs = payload.latency_ms;
+                setLiveLatencyMs(latencyMs);
+              }
+              continue;
+            }
+
+            if (eventName === "error") {
+              const code =
+                typeof payload.error_code === "string" ? payload.error_code : "UNKNOWN_ERROR";
+              const message =
+                typeof payload.error_message === "string" ? payload.error_message : "请求失败";
+              const rid = typeof payload.request_id === "string" ? payload.request_id : "";
+              setErrorMessage(`${code}: ${message}`);
+              setErrorRequestId(rid);
+              return;
+            }
+          } catch {
+            continue;
+          }
+        }
+      }
+
+      appendTurn(content, streamedAnswer, requestId, latencyMs);
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
-        setErrorMessage("请求超时，请稍后重试。");
+        if (streamedAnswer.trim()) {
+          appendTurn(content, streamedAnswer, requestId, latencyMs);
+        }
+        if (!stoppedByUserRef.current) {
+          setErrorMessage("请求超时，请稍后重试。");
+        }
       } else {
-        setErrorMessage(
-          "无法连接后端服务。请先在本地启动 FastAPI（http://localhost:8000）。",
-        );
+        setErrorMessage("无法连接后端服务，请确认 FastAPI 已启动。");
       }
-      setPhase("chat");
     } finally {
+      activeAbortControllerRef.current = null;
+      stoppedByUserRef.current = false;
       window.clearTimeout(timer);
-      setQuestion("");
+      setLoading(false);
+      setPendingQuestion("");
+      setLiveAnswer("");
+      setLiveRequestId("");
+      setLiveLatencyMs(null);
     }
   };
 
   return (
-    <main className="app-shell">
-      <header className="top-bar">
-        <div className="brand">
-          <span className="brand-icon" aria-hidden="true">
-            <Image src="/logo.png" alt="" width={20} height={20} />
-          </span>
-          <span className="brand-text">aikai</span>
-        </div>
-        <button className="top-action" type="button" onClick={resetToHome}>
-          + New Chat
-        </button>
-      </header>
-
-      {phase === "home" && (
-        <section className="home-state fade-in">
-          <div className="avatar">AI</div>
-          <h1>How can I help you today?</h1>
-          <p>
-            Ask me a question, explore a topic, or generate ideas. I&apos;m here to
-            provide simple, direct answers.
-          </p>
-
-          <div className="prompt-cards">
-            <button
-              className="prompt-card"
-              type="button"
-              onClick={() => setQuestion("帮我总结一下今天需要做的三件事")}
-            >
-              <strong>Brainstorm ideas</strong>
-              <span>Creative concepts for a minimalist website.</span>
-            </button>
-            <button
-              className="prompt-card"
-              type="button"
-              onClick={() => setQuestion("请给我一个可执行的学习计划")}
-            >
-              <strong>Summarize text</strong>
-              <span>Condense this article into three key points.</span>
-            </button>
+    <main className="app-layout">
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <div className="sidebar-brand">
+            <span className="sidebar-brand-icon" aria-hidden="true">
+              <Image src={LOGO_SRC} alt="" width={20} height={20} className="brand-logo" />
+            </span>
+            <span>aikai</span>
           </div>
-        </section>
-      )}
+          <button className="sidebar-new-button" type="button" onClick={resetToHome}>
+            <span aria-hidden="true">+</span>
+            <span>新对话</span>
+          </button>
+        </div>
 
-      {(phase === "loading" || phase === "chat") && (
-        <section className="chat-state fade-in">
-          <div className="question-bubble">{activeQuestion}</div>
+        <div className="sidebar-history">
+          <p className="sidebar-section-title">历史记录</p>
+          <button className="sidebar-item sidebar-item-active" type="button">
+            当前对话
+          </button>
+        </div>
 
-          {phase === "loading" && (
-            <div className="loading-block" aria-live="polite">
-              <span className="dot" />
-              <span>Thinking...</span>
-            </div>
-          )}
+        <div className="sidebar-footer">
+          <button className="sidebar-footer-row" type="button">
+            <span className="sidebar-footer-icon" aria-hidden="true">
+              ◐
+            </span>
+            <span>外观</span>
+          </button>
+          <div className="sidebar-footer-row">
+            <span className="sidebar-avatar-placeholder" aria-hidden="true">
+              U
+            </span>
+            <span>访客用户</span>
+          </div>
+        </div>
+      </aside>
 
-          {phase === "chat" && !errorMessage && (
-            <article className="answer-block">
-              <div className="label">INSIGHT</div>
-              {answerParagraphs.map((paragraph) => (
-                <p key={paragraph}>{paragraph}</p>
-              ))}
-              <div className="ops-row">
-                request_id: {requestId || "-"} · latency: {latencyMs ?? "-"} ms
-              </div>
-            </article>
-          )}
+      <section className="workspace">
+        <div className="workspace-inner">
+          <div className="chat-log" ref={chatLogRef}>
+            {!hasConversation && (
+              <article className="message-row message-row-assistant fade-in">
+                <div className="message-avatar message-avatar-assistant" aria-hidden="true">
+                  <Image src={LOGO_SRC} alt="" width={26} height={26} className="brand-logo" />
+                </div>
+                <div className="assistant-intro">你好，我是 aikai。今天想让我帮你做什么？</div>
+              </article>
+            )}
 
-          {phase === "chat" && !!errorMessage && (
-            <article className="error-block">
-              <h3>Request Failed</h3>
-              <p>{errorMessage}</p>
-              <p>request_id: {requestId || "-"}</p>
-            </article>
-          )}
-        </section>
-      )}
+            {turns.map((item, index) => (
+              <article className="chat-turn" key={`${item.requestId}-${index}`}>
+                <div className="message-row message-row-user">
+                  <div className="message-avatar message-avatar-user" aria-hidden="true">
+                    <Image src={USER_AVATAR_SRC} alt="" width={34} height={34} className="user-avatar-img" />
+                  </div>
+                  <div className="question-bubble">{item.question}</div>
+                </div>
+                <div className="message-row message-row-assistant">
+                  <div className="message-avatar message-avatar-assistant" aria-hidden="true">
+                    <Image src={LOGO_SRC} alt="" width={26} height={26} className="brand-logo" />
+                  </div>
+                  <div className="answer-block">
+                    <MarkdownContent content={item.answer} />
+                    <details className="meta-details">
+                      <summary aria-label="查看请求信息" title="查看请求信息">
+                        <span className="meta-icon" aria-hidden="true">
+                          i
+                        </span>
+                      </summary>
+                      <div className="ops-row">
+                        请求ID: {item.requestId || "-"} | 延迟: {item.latencyMs ?? "-"} ms
+                      </div>
+                    </details>
+                  </div>
+                </div>
+              </article>
+            ))}
 
-      <form className="composer" onSubmit={submitQuestion}>
-        <input
-          value={question}
-          onChange={(event) => setQuestion(event.target.value)}
-          placeholder={
-            phase === "home" ? "Ask me anything..." : "Type your next question..."
-          }
-        />
-        <button type="submit" disabled={phase === "loading"}>
-          {phase === "home" ? "➤" : "Ask"}
-        </button>
-      </form>
+            {(loading || !!pendingQuestion) && (
+              <article className="chat-turn" key="live-turn">
+                <div className="message-row message-row-user">
+                  <div className="message-avatar message-avatar-user" aria-hidden="true">
+                    <Image src={USER_AVATAR_SRC} alt="" width={34} height={34} className="user-avatar-img" />
+                  </div>
+                  <div className="question-bubble pending-question">{pendingQuestion}</div>
+                </div>
+                <div className="message-row message-row-assistant">
+                  <div className="message-avatar message-avatar-assistant" aria-hidden="true">
+                    <Image src={LOGO_SRC} alt="" width={26} height={26} className="brand-logo" />
+                  </div>
+                  <div className="answer-block" aria-live="polite">
+                    <MarkdownContent content={liveAnswer || "思考中..."} />
+                    {(liveRequestId || liveLatencyMs !== null) && (
+                      <details className="meta-details">
+                        <summary aria-label="查看请求信息" title="查看请求信息">
+                          <span className="meta-icon" aria-hidden="true">
+                            i
+                          </span>
+                        </summary>
+                        <div className="ops-row">
+                          请求ID: {liveRequestId || "-"} | 延迟: {liveLatencyMs ?? "-"} ms
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                </div>
+              </article>
+            )}
 
-      <footer className="foot-note">AI MODEL: LOCAL MOCK BACKEND · V1.0 BASELINE</footer>
+            {!!errorMessage && (
+              <article className="message-row message-row-assistant">
+                <div className="message-avatar message-avatar-assistant" aria-hidden="true">
+                  <Image src={LOGO_SRC} alt="" width={26} height={26} className="brand-logo" />
+                </div>
+                <div className="error-block">
+                  <h3>请求失败</h3>
+                  <p>{errorMessage}</p>
+                  <p>请求ID: {errorRequestId || "-"}</p>
+                </div>
+              </article>
+            )}
+          </div>
+
+          <form className="composer" onSubmit={submitQuestion}>
+            <input
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder={hasConversation ? "继续追问..." : "请输入你的问题..."}
+            />
+            <button
+              className={`send-button ${loading ? "send-button-stop" : ""}`}
+              type={loading ? "button" : "submit"}
+              onClick={loading ? stopGeneration : undefined}
+              disabled={!loading && !canSubmit}
+              aria-label={loading ? "停止生成" : "发送"}
+            >
+              {loading ? (
+                <svg className="send-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+                </svg>
+              ) : (
+                <svg className="send-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path
+                    d="M21.8 3.2a1 1 0 0 0-1.05-.22L3.25 9.55a1 1 0 0 0 .08 1.88l7.14 2.37 2.37 7.14a1 1 0 0 0 1.88.08l6.57-17.5a1 1 0 0 0-.22-1.05ZM12.1 18.2l-1.67-5.03a1 1 0 0 0-.63-.63L4.78 10.9l13.57-5.1L12.1 18.2Z"
+                    fill="currentColor"
+                  />
+                </svg>
+              )}
+            </button>
+          </form>
+          <p className="workspace-note">AI 可能会犯错，请核验关键信息。</p>
+        </div>
+      </section>
     </main>
   );
 }
+
+

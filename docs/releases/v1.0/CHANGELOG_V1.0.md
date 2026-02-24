@@ -41,6 +41,7 @@
 - 不支持记忆管理
 - 不支持知识库与 MCP
 - 默认 `personal` 模式，不含完整企业能力
+- 超出 `V1.0` 范围的预研能力已转入 `docs/releases/v1.1/V1.1_BACKLOG_FROM_V1.0.md`
 
 ## 关联文档
 

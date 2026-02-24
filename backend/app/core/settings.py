@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(ENV_FILE, override=True)
 
 
 def _parse_int(name: str, default: int) -> int:
@@ -32,6 +39,27 @@ class Settings:
     cors_allow_origins: tuple[str, ...] = tuple(
         _parse_csv("CORS_ALLOW_ORIGINS", "http://localhost:3000")
     )
+    llm_provider: str = os.getenv("LLM_PROVIDER", "siliconflow").strip().lower()
+
+    siliconflow_api_key: str = os.getenv("SILICONFLOW_API_KEY", "")
+    siliconflow_base_url: str = os.getenv(
+        "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
+    )
+    siliconflow_model: str = os.getenv("SILICONFLOW_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+    siliconflow_system_prompt: str = os.getenv(
+        "SILICONFLOW_SYSTEM_PROMPT",
+        "你是 aikai 助手。请默认使用中文，清晰且简洁地回答；仅在用户明确要求其他语言时再切换。",
+    )
+    siliconflow_max_tokens: int = _parse_int("SILICONFLOW_MAX_TOKENS", 800)
+
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    openai_system_prompt: str = os.getenv(
+        "OPENAI_SYSTEM_PROMPT",
+        "你是 aikai 助手。请默认使用中文，清晰且简洁地回答；仅在用户明确要求其他语言时再切换。",
+    )
+    openai_max_tokens: int = _parse_int("OPENAI_MAX_TOKENS", 800)
 
 
 SETTINGS = Settings()

@@ -6,6 +6,7 @@ Thumbs.db
 .vscode/*
 !.vscode/tasks.json
 !.vscode/launch.json
+!.vscode/settings.json
 .idea/
 
 # Node / Frontend
